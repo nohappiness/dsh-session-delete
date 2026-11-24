@@ -44,10 +44,11 @@ dsh plugin --profile desktop add dsh-delete-sessions
 删除按固定顺序执行，任何一步失败都会整体报错，避免「界面里没了但磁盘还在」的半完成状态：
 
 1. **停活动** —— 触发 `workspace/session-stop`（与归档「停止并归档」同一条路径，`agent.cancel`），并短暂等待最后一次事件落盘。
-2. **摘除记账** —— `unarchiveSession` + `unpinSession` + 逐工作区 `detachSession`（均幂等）。
-3. **删投影缓存** —— 走 storage-domain 的 `session_projcache` 域（内存与磁盘同步）；域未挂载时跳过（缓存是派生数据，下次冷读会重建）。
-4. **删日志目录** —— 优先用 `sessionPersistence.locate()` 拿精确路径（session id 已被安全编码，无路径穿越风险），带重试处理 Windows 上反病毒/索引短暂占用。
-5. **广播移除** —— `api-session/removed` 已在 DSH 的转发白名单中，浏览器会立即移除该行。
+2. **注销活会话** —— 会话还在内存里时，先 `agent.cancel({ kind: 'disposed' })` + `whenIdle()` 收敛，再 `sessions.flush()`，最后经运行时可见的 store 内部结构从 `sessions` / `agents` 两处摘掉。缺这一步，删掉的日志会被下一次 append/flush 写回来——列表里那一行重新出现，且因为已被逐工作区 detach，必然落在「未分组」。停不下来时直接报错、**不删文件**。
+3. **摘除记账** —— `unarchiveSession` + `unpinSession` + 逐工作区 `detachSession`（均幂等）。
+4. **删投影缓存** —— 走 storage-domain 的 `session_projcache` 域（内存与磁盘同步）；域未挂载时跳过（缓存是派生数据，下次冷读会重建）。
+5. **删日志目录** —— 优先用 `sessionPersistence.locate()` 拿精确路径（session id 已被安全编码，无路径穿越风险），带重试处理 Windows 上反病毒/索引短暂占用。
+6. **广播移除** —— `api-session/removed` 已在 DSH 的转发白名单中，浏览器会立即移除该行。
 
 ## 安全
 
@@ -59,6 +60,7 @@ dsh plugin --profile desktop add dsh-delete-sessions
 
 - 若 profile 未挂载 `session_projcache` 域或 `~/.dsh/sessions` 无法定位，投影缓存/日志目录可能残留（缓存下次冷读自动重建；日志需手动清理）。
 - 删除**不可撤销**，请确认后再点。
+- 活会话靠 agent 的处置面（`cancel` + `whenIdle`）停用；宿主若注册了形状不同的 agent，删除会以「is live and could not be disposed」失败而不是硬删——先停掉该会话再试。
 
 ## License
 
